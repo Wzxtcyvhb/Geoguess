@@ -7,7 +7,7 @@ objects (planets + a curated list of challenging deep-sky targets) well placed
 during the clear window. On a cloudy night it prints `{"clear": false, ...}`.
 
 ```
-pip install ephem
+python3 -m pip install ephem
 python3 scripts/poznan_sky/poznan_sky.py            # tonight
 python3 scripts/poznan_sky/poznan_sky.py --date 2026-11-04 --weather-json saved.json
 ```

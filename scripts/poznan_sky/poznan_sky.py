@@ -10,12 +10,14 @@ Prints JSON to stdout:
   {"clear": true, "weather": {...}, "objects": [...], ...}
 
 Usage: python3 poznan_sky.py [--date YYYY-MM-DD] [--weather-json FILE]
-Requires: pip install ephem
+Requires: python3 -m pip install ephem
 """
 import argparse
 import json
 import math
 import sys
+import time
+import urllib.error
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -108,8 +110,16 @@ def fetch_weather():
            "visibility,temperature_2m,relative_humidity_2m,dew_point_2m,wind_speed_10m,"
            "precipitation_probability&timezone=Europe%%2FWarsaw&forecast_days=3" % (LAT, LON))
     req = urllib.request.Request(url, headers={"User-Agent": "poznan-sky/1.0"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.load(r)
+    for attempt, pause in enumerate((30, 60, 120, 240, 0)):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return json.load(r)
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as e:
+            retryable = not isinstance(e, urllib.error.HTTPError) or e.code in (429, 500, 502, 503, 504)
+            if not retryable or pause == 0:
+                raise
+            print(f"weather fetch failed ({e}), retry in {pause}s", file=sys.stderr)
+            time.sleep(pause)
 
 
 def weather_for(hours, data):
