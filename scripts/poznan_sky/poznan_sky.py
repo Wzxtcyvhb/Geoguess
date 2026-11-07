@@ -29,6 +29,10 @@ TZ = ZoneInfo("Europe/Warsaw")
 CLOUD_OK = 30        # % total cloud cover counted as "clear enough"
 MIN_CLEAR_HOURS = 3  # need at least this many clear dark hours
 MIN_ALT = 20         # degrees above horizon for deep-sky objects
+FOG_VIS_M = 2000     # visibility below this = fog/mist
+FOG_RH = 95          # radiation-fog setup: humidity >= this ...
+FOG_SPREAD_C = 1.0   # ... temp - dew point <= this ...
+FOG_WIND_KMH = 5     # ... and wind below this
 
 # name, type, RA (h:m:s), Dec (d:m:s), magnitude, rarity 1..5, note
 CATALOG = [
@@ -134,11 +138,26 @@ def weather_for(hours, data):
     return rows
 
 
+def foggy(r):
+    """Fog now (low visibility) or radiation fog likely (saturated, calm air)."""
+    vis = r.get("visibility")
+    if vis is not None and vis < FOG_VIS_M:
+        return True
+    rh, t, td, wind = (r.get(k) for k in ("relative_humidity_2m", "temperature_2m", "dew_point_2m", "wind_speed_10m"))
+    if None in (rh, t, td, wind):
+        return False
+    return rh >= FOG_RH and t - td <= FOG_SPREAD_C and wind < FOG_WIND_KMH
+
+
+def usable(r):
+    return (r["cloud_cover"] or 0) <= CLOUD_OK and not foggy(r)
+
+
 def best_window(rows):
-    """Longest run of consecutive clear hours."""
+    """Longest run of consecutive clear, fog-free hours."""
     best, cur = [], []
     for r in rows:
-        if (r["cloud_cover"] or 0) <= CLOUD_OK:
+        if usable(r):
             cur.append(r)
             if len(cur) > len(best):
                 best = list(cur)
@@ -208,8 +227,11 @@ def main():
     window = best_window(rows)
 
     if len(window) < MIN_CLEAR_HOURS:
-        print(json.dumps({"clear": False, "night": str(night),
-                          "avg_cloud": round(sum(r["cloud_cover"] for r in rows) / max(len(rows), 1))},
+        clear_sky = [r for r in rows if (r["cloud_cover"] or 0) <= CLOUD_OK]
+        reason = "fog" if clear_sky and sum(map(foggy, clear_sky)) >= len(clear_sky) / 2 else "clouds"
+        print(json.dumps({"clear": False, "night": str(night), "reason": reason,
+                          "avg_cloud": round(sum(r["cloud_cover"] for r in rows) / max(len(rows), 1)),
+                          "fog_hours": [r["time"] for r in rows if foggy(r)]},
                          ensure_ascii=False))
         return
 
@@ -232,7 +254,8 @@ def main():
                     "dew_point_c": avg("dew_point_2m"), "wind_kmh": avg("wind_speed_10m"),
                     "visibility_km": round(avg("visibility") / 1000, 1) if avg("visibility") else None,
                     "precip_prob_pct": avg("precipitation_probability"),
-                    "hourly": [{"t": r["time"], "cloud": r["cloud_cover"], "temp": r["temperature_2m"]} for r in rows]},
+                    "hourly": [{"t": r["time"], "cloud": r["cloud_cover"], "temp": r["temperature_2m"], "fog": foggy(r)} for r in rows]},
+        "fog_hours": [r["time"] for r in rows if foggy(r)],
         "moon": moon,
         "objects": objects_tonight(win_hours, moon["illumination_pct"], moon_up / len(win_hours)),
     }
